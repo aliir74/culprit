@@ -14,6 +14,16 @@ enum ProcInfo {
         return path.isEmpty ? nil : path
     }
 
+    /// When the kernel started this pid, or nil if no such process. Paired with a pid it
+    /// identifies one process: a recycled pid has a different start time.
+    static func startTime(_ pid: Int32) -> Date? {
+        var info = proc_bsdinfo()
+        let size = Int32(MemoryLayout<proc_bsdinfo>.size)
+        guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size) == size else { return nil }
+        return Date(timeIntervalSince1970: TimeInterval(info.pbi_start_tvsec)
+                    + TimeInterval(info.pbi_start_tvusec) / 1_000_000)
+    }
+
     static func executablePath(_ pid: Int32) -> String? {
         var buffer = [CChar](repeating: 0, count: 4096)
         guard proc_pidpath(pid, &buffer, UInt32(buffer.count)) > 0 else { return nil }

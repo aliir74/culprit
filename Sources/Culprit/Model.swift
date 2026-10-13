@@ -104,42 +104,71 @@ final class Model: ObservableObject {
 
     // MARK: - stopping leftovers
 
-    /// Stops leftover groups from a fresh reading, never from the one on screen: a pid
-    /// seconds old may already belong to something else. Live sessions are never stopped.
+    /// Stops leftover groups. Each group is planned from its own fresh reading, never from
+    /// the one on screen or one taken before an earlier group's five-second grace period:
+    /// in that time a live session can adopt a process and a pid can be recycled.
+    /// Live sessions are never stopped, and neither is Culprit itself.
     func stop(_ keys: [AttributionKey]) async {
         let ids = Set(keys.map { "\($0)" })
         stopping.formUnion(ids)
         defer { stopping.subtract(ids) }
         message = nil
 
-        guard let (snapshot, sample, _) = await collect() else {
-            message = "Could not read the machine. Nothing was stopped."
-            return
-        }
-        guard sample.roster.allowsReaping else {
-            message = "The session list could not be read, so live sessions could look "
-                + "abandoned. Nothing was stopped."
-            return
-        }
-        let keep = Reaper.keepMarkedWorktrees(in: sample)
         var stopped = 0
-        var survived = 0
+        var failures: [String] = []
         for key in keys {
+            guard let (snapshot, sample, _) = await collect() else {
+                failures.append("could not read the machine")
+                break
+            }
+            guard sample.roster.allowsReaping else {
+                failures.append("the session list could not be read, so live sessions "
+                                + "could look abandoned")
+                break
+            }
             guard let group = snapshot.orphans.first(where: { $0.key == key }) else { continue }
-            let plan = AttributionEngine.reapPlan(
+            let full = AttributionEngine.reapPlan(
                 for: group.key, processes: sample.processes,
                 environments: sample.environments, containers: sample.containers,
-                roster: sample.roster, keepMarkedWorktrees: keep, scope: .attributed)
+                roster: sample.roster, keepMarkedWorktrees: Reaper.keepMarkedWorktrees(in: sample),
+                scope: .attributed)
+            let me = getpid()
+            let plan = ReapPlan(key: full.key,
+                                processes: full.processes.filter { $0.pid != me },
+                                containers: full.containers, refusal: full.refusal)
             guard !plan.isEmpty else { continue }
+
+            // Pin each pid to the process it named when planned. A pid whose start time
+            // has changed is a different process and is neither signalled nor waited on.
+            let started = Dictionary(sample.processes.map { ($0.pid, $0.startedAt) },
+                                     uniquingKeysWith: { a, _ in a })
+            let same: @Sendable (Int32) -> Bool = { pid in
+                guard let expected = started[pid], let now = ProcInfo.startTime(pid) else {
+                    return false
+                }
+                return abs(now.timeIntervalSince(expected)) < 1
+            }
+            let reaper = Reaper(signaller: { pid, signal in same(pid) && kill(pid, signal) == 0 },
+                                isAlive: { pid in same(pid) && kill(pid, 0) == 0 })
             let outcome = await Task.detached(priority: .userInitiated) {
-                Reaper().execute(plan)
+                reaper.execute(plan)
             }.value
-            stopped += outcome.terminated.count + outcome.killed.count
-                + outcome.containersStopped.count
-            survived += outcome.survived.count
+
+            stopped += outcome.terminated.count + outcome.containersStopped.count
+            if !outcome.survived.isEmpty {
+                failures.append("\(outcome.survived.count) process(es) would not stop")
+            }
+            let failedContainers = plan.containers.count - outcome.containersStopped.count
+            if failedContainers > 0 {
+                failures.append("\(failedContainers) container(s) would not stop")
+            }
         }
-        if survived > 0 { message = "\(survived) process(es) would not stop." }
-        else if stopped == 0 { message = "Nothing left to stop." }
+        if !failures.isEmpty {
+            message = failures.joined(separator: "; ").prefix(1).uppercased()
+                + failures.joined(separator: "; ").dropFirst() + "."
+        } else if stopped == 0 {
+            message = "Nothing left to stop."
+        }
         await refresh()
     }
 
