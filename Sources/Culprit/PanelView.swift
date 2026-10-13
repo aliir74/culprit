@@ -10,6 +10,13 @@ struct PanelView: View {
     @State private var showAllAgents = false
     @State private var showAllApps = false
 
+    init(model: Model, flat: Bool = false) {
+        self.model = model
+        self.flat = flat
+        // A snapshot cannot press "more", so it shows every session.
+        _showAllAgents = State(initialValue: flat)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             if let data = model.data {
@@ -62,7 +69,17 @@ struct PanelView: View {
         let visible = showAllAgents ? data.agents : Array(data.agents.prefix(5))
         ForEach(visible) { row in
             AgentRowView(row: row, history: model.history[row.id] ?? [],
-                         expanded: expanded.contains(row.id)) {
+                         expanded: expanded.contains(row.id),
+                         paused: model.paused[row.id] != nil,
+                         busy: model.pausing.contains(row.id),
+                         canPause: data.canStop,
+                         togglePause: {
+                             let paused = model.paused[row.id] != nil
+                             Task {
+                                 if paused { await model.resume(row.key) }
+                                 else { await model.pause(row.key) }
+                             }
+                         }) {
                 withAnimation(.easeOut(duration: 0.15)) {
                     if expanded.contains(row.id) { expanded.remove(row.id) }
                     else { expanded.insert(row.id) }
@@ -181,6 +198,10 @@ struct AgentRowView: View {
     let row: PanelData.AgentRow
     let history: [Double]
     let expanded: Bool
+    let paused: Bool
+    let busy: Bool
+    let canPause: Bool
+    let togglePause: () -> Void
     let toggle: () -> Void
     @State private var hover = false
 
@@ -197,16 +218,28 @@ struct AgentRowView: View {
                     }
                     .lineLimit(1)
                     .truncationMode(.tail)
-                    if let detail = row.detail {
-                        Text(detail)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
+                    if paused || row.detail != nil {
+                        HStack(spacing: 4) {
+                            if paused {
+                                Text("paused")
+                                    .font(.caption2.weight(.semibold))
+                                    .foregroundStyle(.blue)
+                                    .padding(.horizontal, 5).padding(.vertical, 1)
+                                    .background(Capsule().fill(Color.blue.opacity(0.15)))
+                                    .fixedSize()
+                            }
+                            if let detail = row.detail {
+                                Text(detail)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                            }
+                        }
                     }
                 }
                 Spacer(minLength: 4)
-                Sparkline(values: history)
+                Sparkline(values: history, dimmed: paused)
                     .frame(width: 44, height: 16)
                 VStack(alignment: .trailing, spacing: 1) {
                     Text(Fmt.cpu(row.cpu))
@@ -219,6 +252,7 @@ struct AgentRowView: View {
                         .foregroundStyle(.secondary)
                 }
                 .frame(minWidth: 46, alignment: .trailing)
+                pauseButton
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 5)
@@ -252,6 +286,23 @@ struct AgentRowView: View {
                 .padding(.trailing, 16)
                 .padding(.bottom, 6)
             }
+        }
+    }
+
+    @ViewBuilder private var pauseButton: some View {
+        if busy {
+            ProgressView().controlSize(.mini).frame(width: 18)
+        } else {
+            Button(action: togglePause) {
+                Image(systemName: paused ? "play.circle.fill" : "pause.circle")
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(paused ? Color.blue : Color.secondary)
+            .disabled(!canPause)
+            .help(!canPause ? "The session list could not be read, so pausing is off"
+                  : paused ? "Resume this session"
+                  : "Pause this session and everything it started")
+            .frame(width: 18)
         }
     }
 
@@ -457,6 +508,7 @@ enum IconCache {
 
 struct Sparkline: View {
     let values: [Double]
+    var dimmed = false
 
     var body: some View {
         Canvas { context, size in
@@ -469,7 +521,8 @@ struct Sparkline: View {
                                     y: size.height - 1 - CGFloat(value / top) * (size.height - 2))
                 index == 0 ? path.move(to: point) : path.addLine(to: point)
             }
-            context.stroke(path, with: .color(Fmt.rowColor(values.last)), lineWidth: 1.5)
+            let color = dimmed ? Color.secondary.opacity(0.5) : Fmt.rowColor(values.last)
+            context.stroke(path, with: .color(color), lineWidth: 1.5)
         }
     }
 }

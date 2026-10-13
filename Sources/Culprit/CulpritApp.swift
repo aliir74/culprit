@@ -31,6 +31,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
     }
+
+    /// Nothing Culprit paused may outlive it. A crash skips this, which is what the
+    /// record on disk and the resume at launch are for.
+    func applicationWillTerminate(_ notification: Notification) {
+        MainActor.assumeIsolated {
+            guard !CommandLine.arguments.contains("--snapshot") else { return }
+            Model.shared.resumeAllNow()
+        }
+    }
 }
 
 /// `Culprit --snapshot out.png`: take two readings, render the panel to a PNG, and exit.
@@ -40,6 +49,7 @@ enum Snapshotter {
     static func run(to path: String) {
         Task {
             let model = Model.shared
+            model.showRecordedPauses()
             await model.refresh()
             try? await Task.sleep(for: .seconds(2))
             await model.refresh()

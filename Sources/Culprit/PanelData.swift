@@ -27,6 +27,7 @@ struct PanelData: Sendable {
 
     struct AgentRow: Sendable, Identifiable {
         let id: String
+        let key: AttributionKey
         let title: String
         let subtitle: String?
         let detail: String?
@@ -128,7 +129,8 @@ enum PanelBuilder {
             let detail = detailLine(group: group, hottest: paths.first, base: base)
             let app = group.sessionPID.flatMap { hostApp(of: $0, byPID: byPID, bundles: bundles) }
 
-            return PanelData.AgentRow(id: "\(group.key)", title: title, subtitle: subtitle,
+            return PanelData.AgentRow(id: "\(group.key)", key: group.key, title: title,
+                                      subtitle: subtitle,
                                       detail: detail, cpu: group.cpuPercent,
                                       rss: group.rssBytes, appBundle: app,
                                       folder: base, paths: paths)
