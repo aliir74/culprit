@@ -66,7 +66,11 @@ struct PanelView: View {
                 .font(.callout).foregroundStyle(.secondary)
                 .padding(.horizontal, 16).padding(.vertical, 6)
         }
-        let visible = showAllAgents ? data.agents : Array(data.agents.prefix(5))
+        // A paused session reads 0% and sorts last, so it is kept in view regardless of
+        // its place: a frozen session nobody can see is one nobody resumes.
+        let visible = showAllAgents ? data.agents
+            : data.agents.enumerated().filter { $0.offset < 5 || model.paused[$0.element.id] != nil }
+                .map(\.element)
         ForEach(visible) { row in
             AgentRowView(row: row, history: model.history[row.id] ?? [],
                          expanded: expanded.contains(row.id),
@@ -86,8 +90,8 @@ struct PanelView: View {
                 }
             }
         }
-        if data.agents.count > 5 {
-            let rest = data.agents.dropFirst(5)
+        let rest = data.agents.filter { row in !visible.contains { $0.id == row.id } }
+        if showAllAgents ? data.agents.count > 5 : !rest.isEmpty {
             MoreButton(label: showAllAgents ? "Show fewer"
                        : "\(rest.count) more · \(Fmt.cpu(rest.reduce(0) { $0 + ($1.cpu ?? 0) }))") {
                 showAllAgents.toggle()
