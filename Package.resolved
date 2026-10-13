@@ -1,0 +1,15 @@
+{
+  "originHash" : "d0cd8784b7ccb3e3d9565d473c8888e10d9af5dd6b61ed405fac554b4896b7cd",
+  "pins" : [
+    {
+      "identity" : "claude-top",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/mbrummerstedt/claude-top.git",
+      "state" : {
+        "branch" : "d088212",
+        "revision" : "d088212b58ad7a9b8d424ca283e4aef90224227e"
+      }
+    }
+  ],
+  "version" : 3
+}
