@@ -460,6 +460,9 @@ struct FooterView: View {
                 Picker("Update every", selection: $model.interval) {
                     ForEach([2.0, 3, 5, 10], id: \.self) { Text("\(Int($0)) seconds").tag($0) }
                 }
+                Picker("Menu bar shows", selection: $model.indicator) {
+                    ForEach(IndicatorStyle.allCases) { Text($0.title).tag($0) }
+                }
                 Toggle("Start at login", isOn: Binding(
                     get: { model.startsAtLogin },
                     set: { model.setStartsAtLogin($0) }))

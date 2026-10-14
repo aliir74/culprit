@@ -10,6 +10,8 @@ final class Model: ObservableObject {
     @Published private(set) var data: PanelData?
     /// Recent CPU per row id, oldest first, for the sparklines.
     @Published private(set) var history: [String: [Double]] = [:]
+    /// Recent whole-machine busy percent, oldest first, for the menu bar graph.
+    @Published private(set) var machineHistory: [Double] = []
     @Published private(set) var ownCPU: Double?
     @Published private(set) var stopping: Set<String> = []
     /// Agent rows Culprit has paused, by row id. Mirrored to `PauseStore` on every change.
@@ -18,6 +20,10 @@ final class Model: ObservableObject {
     @Published var message: String?
     @Published var interval: Double = UserDefaults.standard.object(forKey: "interval") as? Double ?? 3 {
         didSet { UserDefaults.standard.set(interval, forKey: "interval") }
+    }
+    @Published var indicator: IndicatorStyle = UserDefaults.standard.string(forKey: "indicator")
+        .flatMap(IndicatorStyle.init(rawValue:)) ?? .cores {
+        didSet { UserDefaults.standard.set(indicator.rawValue, forKey: "indicator") }
     }
 
     private let historyLength = 24
@@ -31,9 +37,17 @@ final class Model: ObservableObject {
     /// Set by `--snapshot`, which shows another Culprit's pauses and must not rewrite them.
     private var pausesReadOnly = false
 
-    var menuBarTitle: String {
-        guard let busy = data?.header.busyPercent else { return "—" }
-        return "\(Int(busy.rounded()))%"
+    /// Icon of the app whose agent is busiest, once that agent uses half a core or more.
+    /// With no agent that busy, the busiest other app, so a loaded machine never shows
+    /// a bare glyph.
+    var busiestAppIcon: NSImage? {
+        guard let data else { return nil }
+        let agent = data.agents.filter { ($0.cpu ?? 0) >= 50 }.max { ($0.cpu ?? 0) < ($1.cpu ?? 0) }
+        let app = data.apps.filter { $0.cpu >= 50 }.max { $0.cpu < $1.cpu }
+        guard agent != nil || app != nil else { return nil }
+        // A process outside any app bundle (WebContent, a script) gets the generic app icon.
+        let bundle = agent.map { $0.appBundle } ?? app?.appBundle
+        return bundle.flatMap(IconCache.icon(for:)) ?? NSWorkspace.shared.icon(for: .applicationBundle)
     }
 
     var severity: Color {
@@ -77,6 +91,9 @@ final class Model: ObservableObject {
             next[row.id] = Array(series.suffix(historyLength))
         }
         history = next
+        if let busy = data.header.busyPercent {
+            machineHistory = Array((machineHistory + [busy]).suffix(historyLength))
+        }
     }
 
     /// Lifted from claude-top's app: sampling reads process environments and shells out to

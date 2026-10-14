@@ -10,9 +10,7 @@ struct CulpritApp: App {
         MenuBarExtra {
             PanelView(model: model)
         } label: {
-            Text(model.menuBarTitle)
-                .monospacedDigit()
-                .foregroundStyle(model.severity)
+            MenuBarLabel(model: model)
         }
         .menuBarExtraStyle(.window)
     }
@@ -42,7 +40,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
-/// `Culprit --snapshot out.png`: take two readings, render the panel to a PNG, and exit.
+/// `Culprit --snapshot out.png`: take a few readings, render the panel to a PNG, and exit.
+/// Every menu bar style goes to `out-menubar.png`, on a light and a dark bar.
 /// Used to check the UI without clicking the menu bar.
 @MainActor
 enum Snapshotter {
@@ -50,19 +49,43 @@ enum Snapshotter {
         Task {
             let model = Model.shared
             model.showRecordedPauses()
-            await model.refresh()
-            try? await Task.sleep(for: .seconds(2))
-            await model.refresh()
+            // Several readings, so the menu bar graph has a line to draw.
+            for _ in 0..<6 {
+                await model.refresh()
+                try? await Task.sleep(for: .seconds(1))
+            }
             let view = PanelView(model: model, flat: true)
                 .background(Color(nsColor: .windowBackgroundColor))
                 .environment(\.colorScheme, .dark)
-            let renderer = ImageRenderer(content: view)
-            renderer.scale = 2
-            if let image = renderer.nsImage, let tiff = image.tiffRepresentation,
-               let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) {
-                try? png.write(to: URL(fileURLWithPath: path))
+            write(view, to: path)
+            let strip = HStack(spacing: 0) {
+                ForEach([ColorScheme.light, .dark], id: \.self) { scheme in
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(IndicatorStyle.allCases) { style in
+                            HStack {
+                                Text(style.title).frame(width: 100, alignment: .leading)
+                                MenuBarLabel(model: model, style: style)
+                            }
+                        }
+                    }
+                    .padding(12)
+                    .background(scheme == .dark ? Color(white: 0.15) : Color(white: 0.92))
+                    .environment(\.colorScheme, scheme)
+                    .foregroundStyle(scheme == .dark ? .white : .black)
+                }
             }
+            let base = URL(fileURLWithPath: path).deletingPathExtension().path
+            write(strip, to: base + "-menubar.png")
             NSApp.terminate(nil)
+        }
+    }
+
+    private static func write(_ view: some View, to path: String) {
+        let renderer = ImageRenderer(content: view)
+        renderer.scale = 2
+        if let image = renderer.nsImage, let tiff = image.tiffRepresentation,
+           let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) {
+            try? png.write(to: URL(fileURLWithPath: path))
         }
     }
 }
