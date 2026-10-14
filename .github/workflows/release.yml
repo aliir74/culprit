@@ -27,14 +27,16 @@ jobs:
 
       - name: Package
         id: package
-        run: echo "zip=$(./Scripts/package-release.sh)" >> "$GITHUB_OUTPUT"
+        run: |
+          zip="$(./Scripts/package-release.sh)"
+          echo "zip=$zip" >> "$GITHUB_OUTPUT"
 
       # Notes are this version's section of CHANGELOG.md, up to the next "## " heading.
       - name: Release notes
         run: |
           version="${GITHUB_REF_NAME#v}"
           awk -v v="$version" '
-            $0 ~ "^## \\[?" v "\\]?" { on = 1; next }
+            index($0, "## [" v "]") == 1 { on = 1; next }
             on && /^## / { exit }
             on { print }
           ' CHANGELOG.md > build/notes.md

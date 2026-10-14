@@ -15,7 +15,7 @@ pile of `node`.
 |---|---|
 | Menu bar | How busy the CPU is, in green, orange or red (red also when threads queue up past twice the core count) |
 | Agents | One row per agent session: repo, branch, CPU, memory and a sparkline of the last minute. Click a row to see the folders its processes run in; click a folder to open it in Finder |
-| Leftovers | Process groups and Docker containers whose session has ended. One button stops them. Live sessions and Culprit itself are never stopped |
+| Leftovers | Process groups and Docker containers whose session has ended. One button stops them. Processes of live sessions and Culprit itself are never stopped; Compose containers are matched by their worktree folder, so stop leftovers in a worktree a live session is using with care |
 | Other apps | Everything else, grouped by the app it belongs to, so Chrome's 28 helpers are one row |
 | Footer | Refresh interval, start at login, and Culprit's own CPU |
 
