@@ -12,6 +12,9 @@ final class Model: ObservableObject {
     @Published private(set) var history: [String: [Double]] = [:]
     @Published private(set) var ownCPU: Double?
     @Published private(set) var stopping: Set<String> = []
+    /// Agent rows Culprit has paused, by row id. Mirrored to `PauseStore` on every change.
+    @Published private(set) var paused: [String: [PausedProcess]] = [:]
+    @Published private(set) var pausing: Set<String> = []
     @Published var message: String?
     @Published var interval: Double = UserDefaults.standard.object(forKey: "interval") as? Double ?? 3 {
         didSet { UserDefaults.standard.set(interval, forKey: "interval") }
@@ -25,6 +28,8 @@ final class Model: ObservableObject {
     private var previousTicks: CPUTicks?
     private var ticker: Task<Void, Never>?
     private var busy = false
+    /// Set by `--snapshot`, which shows another Culprit's pauses and must not rewrite them.
+    private var pausesReadOnly = false
 
     var menuBarTitle: String {
         guard let busy = data?.header.busyPercent else { return "—" }
@@ -40,6 +45,7 @@ final class Model: ObservableObject {
 
     func start() {
         guard ticker == nil else { return }
+        PauseStore.recover()
         ticker = Task { [weak self] in
             while !Task.isCancelled {
                 await self?.refresh()
@@ -58,6 +64,7 @@ final class Model: ObservableObject {
             PanelBuilder.build(snapshot: snapshot, sample: sample, cpu: cpu, bundles: bundles)
         }.value
         ownCPU = cpu[getpid()]
+        forgetEndedPauses()
         record(built)
         data = built
     }
@@ -133,8 +140,13 @@ final class Model: ObservableObject {
                 roster: sample.roster, keepMarkedWorktrees: Reaper.keepMarkedWorktrees(in: sample),
                 scope: .attributed)
             let me = getpid()
+            // A paused session never answers, so if it ever drops out of the session list
+            // its processes would read as leftovers. Paused is not abandoned.
+            let held = Set(paused.values.joined().filter(\.isSame).map(\.pid))
             let plan = ReapPlan(key: full.key,
-                                processes: full.processes.filter { $0.pid != me },
+                                processes: full.processes.filter {
+                                    $0.pid != me && !held.contains($0.pid)
+                                },
                                 containers: full.containers, refusal: full.refusal)
             guard !plan.isEmpty else { continue }
 
@@ -170,6 +182,138 @@ final class Model: ObservableObject {
             message = "Nothing left to stop."
         }
         await refresh()
+    }
+
+    // MARK: - pausing sessions
+
+    /// Stops a whole session with `SIGSTOP`, its own `claude` process included. Pausing
+    /// only the children would leave Claude's Bash tool timing them out and killing them.
+    /// Planned from a fresh reading, like `stop`, and recorded on disk before the first
+    /// signal so a crash part way through still leaves something for the next launch to
+    /// undo.
+    func pause(_ key: AttributionKey) async {
+        let id = "\(key)"
+        guard paused[id] == nil, !pausing.contains(id) else { return }
+        pausing.insert(id)
+        defer { pausing.remove(id) }
+        message = nil
+
+        guard let (snapshot, sample, _) = await collect() else {
+            message = "Could not read the machine."
+            return
+        }
+        guard sample.roster.allowsReaping else {
+            message = "The session list could not be read, so pausing is off."
+            return
+        }
+        guard let group = snapshot.sessions.first(where: { $0.key == key }) else {
+            message = "That session has ended."
+            return
+        }
+        let planned = members(of: group, in: sample)
+        guard !planned.isEmpty else {
+            message = "Nothing to pause."
+            return
+        }
+
+        paused[id] = planned
+        guard PauseStore.save(paused) else {
+            paused[id] = nil
+            message = "Could not record the pause on disk, so nothing was paused."
+            return
+        }
+        // Signalled here on the main actor rather than detached, because
+        // `applicationWillTerminate` runs here too: a quit cannot land between the record
+        // and the signals and leave a process stopped with nothing left to resume it. The
+        // session's root goes first, so it cannot react to its children stopping.
+        var stopped = planned.filter { $0.isSame && kill($0.pid, SIGSTOP) == 0 }
+        paused[id] = stopped.isEmpty ? nil : stopped
+        PauseStore.save(paused)
+        if stopped.isEmpty {
+            message = "Nothing to pause."
+            return
+        }
+
+        // A child can fork between the reading and its own stop. Read again until the
+        // group holds nothing new; with the root stopped, that settles within a pass or two.
+        for _ in 0..<3 {
+            guard let (snapshot, sample, _) = await collect(), paused[id] != nil,
+                  let group = snapshot.sessions.first(where: { $0.key == key }) else { break }
+            let known = Set(stopped.map(\.pid))
+            let late = members(of: group, in: sample).filter { !known.contains($0.pid) }
+            guard !late.isEmpty else { break }
+            paused[id] = stopped + late
+            guard PauseStore.save(paused) else { break }
+            stopped += late.filter { $0.isSame && kill($0.pid, SIGSTOP) == 0 }
+            paused[id] = stopped
+            PauseStore.save(paused)
+        }
+        await refresh()
+    }
+
+    /// Sends `SIGCONT` to what was paused, then to the group as it reads now, in case the
+    /// record missed anything.
+    func resume(_ key: AttributionKey) async {
+        let id = "\(key)"
+        guard !pausing.contains(id) else { return }
+        pausing.insert(id)
+        defer { pausing.remove(id) }
+        message = nil
+
+        // Children before the root, so the root wakes to children already running.
+        let recorded = Array((paused[id] ?? []).reversed())
+        await Task.detached(priority: .userInitiated) { _ = PauseStore.resume(recorded) }.value
+
+        if let (snapshot, sample, _) = await collect(),
+           let group = snapshot.sessions.first(where: { $0.key == key }) {
+            let current = Array(members(of: group, in: sample).reversed())
+            await Task.detached(priority: .userInitiated) { _ = PauseStore.resume(current) }.value
+        }
+        paused[id] = nil
+        PauseStore.save(paused)
+        await refresh()
+    }
+
+    /// Resumes everything Culprit paused. Synchronous, for `applicationWillTerminate`.
+    func resumeAllNow() {
+        for processes in paused.values { PauseStore.resume(processes.reversed()) }
+        paused = [:]
+        PauseStore.save(paused)
+    }
+
+    /// Shows what an already running Culprit has paused, without touching it. For
+    /// `--snapshot`, which runs beside the installed app and must not undo its pauses.
+    func showRecordedPauses() {
+        pausesReadOnly = true
+        paused = PauseStore.load()
+    }
+
+    /// A session's processes pinned to their start times, root first. Never Culprit
+    /// itself, and never another live session's root, which can sit in this group when
+    /// one session started another.
+    private func members(of group: AttributionGroup, in sample: RawSample) -> [PausedProcess] {
+        let started = Dictionary(sample.processes.map { ($0.pid, $0.startedAt) },
+                                 uniquingKeysWith: { a, _ in a })
+        let me = getpid()
+        let otherRoots = Set(sample.roster.sessions.map(\.pid).filter { $0 != group.sessionPID })
+        var pids = group.pids.filter { $0 != group.sessionPID }
+        if let root = group.sessionPID { pids.insert(root, at: 0) }
+        return pids.compactMap { pid in
+            guard pid > 1, pid != me, !otherRoots.contains(pid),
+                  let startedAt = started[pid] else { return nil }
+            return PausedProcess(pid: pid, startedAt: startedAt)
+        }
+    }
+
+    /// Drops pauses whose session root has exited. Whatever it left stopped is resumed,
+    /// because with the session gone its row is gone too, and nothing could resume them.
+    private func forgetEndedPauses() {
+        let ended = paused.filter { !($0.value.first?.isSame ?? false) }
+        guard !ended.isEmpty else { return }
+        for id in ended.keys { paused[id] = nil }
+        guard !pausesReadOnly else { return }
+        for processes in ended.values { PauseStore.resume(processes.reversed()) }
+        PauseStore.save(paused)
     }
 
     // MARK: - login item
