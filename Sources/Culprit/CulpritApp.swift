@@ -64,7 +64,8 @@ enum Snapshotter {
                     .foregroundStyle(scheme == .dark ? .white : .black)
                 }
             }
-            write(strip, to: path.replacingOccurrences(of: ".png", with: "-menubar.png"))
+            let base = URL(fileURLWithPath: path).deletingPathExtension().path
+            write(strip, to: base + "-menubar.png")
             NSApp.terminate(nil)
         }
     }
