@@ -139,6 +139,7 @@ final class Model: ObservableObject {
         message = nil
 
         var stopped = 0
+        var kept = 0
         var failures: [String] = []
         for key in keys {
             guard let (snapshot, sample, _) = await collect() else {
@@ -160,11 +161,20 @@ final class Model: ObservableObject {
             // A paused session never answers, so if it ever drops out of the session list
             // its processes would read as leftovers. Paused is not abandoned.
             let held = Set(paused.values.joined().filter(\.isSame).map(\.pid))
+            // reapPlan picks Compose containers by worktree alone. When a live session
+            // works in the same worktree as the leftovers, the containers are its too.
+            let liveWorktrees = Set(sample.roster.sessions.compactMap {
+                Self.worktree(of: $0.cwd)
+            })
+            let containers = full.containers.filter {
+                Self.worktree(of: $0.workingDirectory).map { !liveWorktrees.contains($0) } ?? true
+            }
+            kept += full.containers.count - containers.count
             let plan = ReapPlan(key: full.key,
                                 processes: full.processes.filter {
                                     $0.pid != me && !held.contains($0.pid)
                                 },
-                                containers: full.containers, refusal: full.refusal)
+                                containers: containers, refusal: full.refusal)
             guard !plan.isEmpty else { continue }
 
             // Pin each pid to the process it named when planned. A pid whose start time
@@ -191,6 +201,9 @@ final class Model: ObservableObject {
             if failedContainers > 0 {
                 failures.append("\(failedContainers) container(s) would not stop")
             }
+        }
+        if kept > 0 {
+            failures.append("kept \(kept) container(s) a live session in the same worktree uses")
         }
         if !failures.isEmpty {
             message = failures.joined(separator: "; ").prefix(1).uppercased()
@@ -331,6 +344,16 @@ final class Model: ObservableObject {
         guard !pausesReadOnly else { return }
         for processes in ended.values { PauseStore.resume(processes.reversed()) }
         PauseStore.save(paused)
+    }
+
+    /// The worktree a path is in, matched the way ClaudeTopKit's `worktreeID(forPath:)`
+    /// matches it (internal there): the repo folder before the marker, the worktree after.
+    nonisolated static func worktree(of path: String) -> String? {
+        guard let marker = path.range(of: "/.claude/worktrees/"),
+              let repo = path[..<marker.lowerBound].split(separator: "/").last,
+              let worktree = path[marker.upperBound...].split(separator: "/").first
+        else { return nil }
+        return "\(repo)/\(worktree)"
     }
 
     // MARK: - login item
