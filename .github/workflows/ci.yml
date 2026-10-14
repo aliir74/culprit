@@ -1,0 +1,27 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    name: Build and package
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the build number is the commit count
+
+      - name: Show toolchain
+        run: swift --version
+
+      # The same script the release runs, so the first tagged release is not its first run.
+      - name: Package
+        run: ./Scripts/package-release.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Culprit-${{ github.sha }}
+          path: build/Culprit-*.zip

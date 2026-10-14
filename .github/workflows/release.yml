@@ -1,0 +1,53 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and publish
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check the tag matches VERSION
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          version="$(tr -d '[:space:]' < VERSION)"
+          if [[ "$tag" != "$version" ]]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match VERSION $version"
+            exit 1
+          fi
+
+      - name: Package
+        id: package
+        run: |
+          zip="$(./Scripts/package-release.sh)"
+          echo "zip=$zip" >> "$GITHUB_OUTPUT"
+
+      # Notes are this version's section of CHANGELOG.md, up to the next "## " heading.
+      - name: Release notes
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          awk -v v="$version" '
+            index($0, "## [" v "]") == 1 { on = 1; next }
+            on && /^## / { exit }
+            on { print }
+          ' CHANGELOG.md > build/notes.md
+          if [[ ! -s build/notes.md ]]; then
+            echo "::error::CHANGELOG.md has no section for $version"
+            exit 1
+          fi
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" "${{ steps.package.outputs.zip }}" \
+            --title "Culprit $GITHUB_REF_NAME" --notes-file build/notes.md
