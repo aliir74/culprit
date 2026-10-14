@@ -7,10 +7,11 @@ struct PausedProcess: Codable, Hashable, Sendable {
     let pid: Int32
     let startedAt: Date
 
-    /// Still the process that was paused: same pid, same start time.
+    /// Still the process that was paused: same pid, same start time. Both sides come from
+    /// the kernel's microsecond start time, so the margin only absorbs rounding.
     var isSame: Bool {
         guard let now = ProcInfo.startTime(pid) else { return false }
-        return abs(now.timeIntervalSince(startedAt)) < 1
+        return abs(now.timeIntervalSince(startedAt)) < 0.001
     }
 }
 
@@ -29,15 +30,23 @@ enum PauseStore {
         return paused
     }
 
-    static func save(_ paused: [String: [PausedProcess]]) {
+    /// False when the record could not be written. A pause must not go ahead without one.
+    @discardableResult
+    static func save(_ paused: [String: [PausedProcess]]) -> Bool {
+        let fm = FileManager.default
         guard !paused.isEmpty else {
-            try? FileManager.default.removeItem(at: url)
-            return
+            try? fm.removeItem(at: url)
+            return !fm.fileExists(atPath: url.path)
         }
-        guard let data = try? JSONEncoder().encode(paused) else { return }
-        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(),
-                                                 withIntermediateDirectories: true)
-        try? data.write(to: url, options: .atomic)
+        do {
+            let data = try JSONEncoder().encode(paused)
+            try fm.createDirectory(at: url.deletingLastPathComponent(),
+                                   withIntermediateDirectories: true)
+            try data.write(to: url, options: .atomic)
+            return true
+        } catch {
+            return false
+        }
     }
 
     /// Sends `SIGCONT` to each process that is still the one recorded, in the order given.

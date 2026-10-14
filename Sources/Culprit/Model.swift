@@ -217,14 +217,37 @@ final class Model: ObservableObject {
         }
 
         paused[id] = planned
-        PauseStore.save(paused)
-        // The session's root goes first, so it cannot react to its children stopping.
-        let stopped = await Task.detached(priority: .userInitiated) {
-            planned.filter { $0.isSame && kill($0.pid, SIGSTOP) == 0 }
-        }.value
+        guard PauseStore.save(paused) else {
+            paused[id] = nil
+            message = "Could not record the pause on disk, so nothing was paused."
+            return
+        }
+        // Signalled here on the main actor rather than detached, because
+        // `applicationWillTerminate` runs here too: a quit cannot land between the record
+        // and the signals and leave a process stopped with nothing left to resume it. The
+        // session's root goes first, so it cannot react to its children stopping.
+        var stopped = planned.filter { $0.isSame && kill($0.pid, SIGSTOP) == 0 }
         paused[id] = stopped.isEmpty ? nil : stopped
         PauseStore.save(paused)
-        if stopped.isEmpty { message = "Nothing to pause." }
+        if stopped.isEmpty {
+            message = "Nothing to pause."
+            return
+        }
+
+        // A child can fork between the reading and its own stop. Read again until the
+        // group holds nothing new; with the root stopped, that settles within a pass or two.
+        for _ in 0..<3 {
+            guard let (snapshot, sample, _) = await collect(), paused[id] != nil,
+                  let group = snapshot.sessions.first(where: { $0.key == key }) else { break }
+            let known = Set(stopped.map(\.pid))
+            let late = members(of: group, in: sample).filter { !known.contains($0.pid) }
+            guard !late.isEmpty else { break }
+            paused[id] = stopped + late
+            guard PauseStore.save(paused) else { break }
+            stopped += late.filter { $0.isSame && kill($0.pid, SIGSTOP) == 0 }
+            paused[id] = stopped
+            PauseStore.save(paused)
+        }
         await refresh()
     }
 
@@ -282,13 +305,15 @@ final class Model: ObservableObject {
         }
     }
 
-    /// Drops pauses whose processes have all exited, so a session killed while paused
-    /// does not stay recorded forever.
+    /// Drops pauses whose session root has exited. Whatever it left stopped is resumed,
+    /// because with the session gone its row is gone too, and nothing could resume them.
     private func forgetEndedPauses() {
-        let alive = paused.filter { $0.value.contains(where: \.isSame) }
-        guard alive.count != paused.count else { return }
-        paused = alive
-        if !pausesReadOnly { PauseStore.save(paused) }
+        let ended = paused.filter { !($0.value.first?.isSame ?? false) }
+        guard !ended.isEmpty else { return }
+        for id in ended.keys { paused[id] = nil }
+        guard !pausesReadOnly else { return }
+        for processes in ended.values { PauseStore.resume(processes.reversed()) }
+        PauseStore.save(paused)
     }
 
     // MARK: - login item

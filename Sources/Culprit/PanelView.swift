@@ -302,9 +302,10 @@ struct AgentRowView: View {
             }
             .buttonStyle(.plain)
             .foregroundStyle(paused ? Color.blue : Color.secondary)
-            .disabled(!canPause)
-            .help(!canPause ? "The session list could not be read, so pausing is off"
-                  : paused ? "Resume this session"
+            // Resuming works from the record alone, so only pausing needs the session list.
+            .disabled(!canPause && !paused)
+            .help(paused ? "Resume this session"
+                  : !canPause ? "The session list could not be read, so pausing is off"
                   : "Pause this session and everything it started")
             .frame(width: 18)
         }
