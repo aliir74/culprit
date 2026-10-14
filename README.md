@@ -7,7 +7,7 @@ coding-agent session that spawned it (Claude Code, T3 Code) and by the repo, wor
 it runs in. When five agents work in five worktrees of the same repo, you see five rows, not one
 pile of `node`.
 
-<p align="center"><img src="docs/panel.png" width="380" alt="The Culprit panel: CPU header and agent sessions by repo and branch"></p>
+<p align="center"><img src="docs/panel.png" width="384" alt="The Culprit panel: CPU header, agent sessions by repo, leftovers and other apps"></p>
 
 ## What it does
 

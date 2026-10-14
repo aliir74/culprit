@@ -26,8 +26,9 @@ swift build                                    # compile check only
 ```
 
 `--snapshot` is for checking layout without clicking the menu bar. `ImageRenderer` draws buttons
-as yellow placeholders, so it is not good enough for the README screenshot; take that with
-`screencapture` of the open panel.
+as yellow placeholders, so it is not good enough for the README screenshot. Take that from the
+open panel instead. `screencapture` from an agent shell comes back black when the shell has no
+Screen Recording grant or the screen is locked; cua-driver's `get_desktop_state` has its own grant.
 
 ## Rules
 
