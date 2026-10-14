@@ -10,11 +10,17 @@ final class Model: ObservableObject {
     @Published private(set) var data: PanelData?
     /// Recent CPU per row id, oldest first, for the sparklines.
     @Published private(set) var history: [String: [Double]] = [:]
+    /// Recent whole-machine busy percent, oldest first, for the menu bar graph.
+    @Published private(set) var machineHistory: [Double] = []
     @Published private(set) var ownCPU: Double?
     @Published private(set) var stopping: Set<String> = []
     @Published var message: String?
     @Published var interval: Double = UserDefaults.standard.object(forKey: "interval") as? Double ?? 3 {
         didSet { UserDefaults.standard.set(interval, forKey: "interval") }
+    }
+    @Published var indicator: IndicatorStyle = UserDefaults.standard.string(forKey: "indicator")
+        .flatMap(IndicatorStyle.init(rawValue:)) ?? .cores {
+        didSet { UserDefaults.standard.set(indicator.rawValue, forKey: "indicator") }
     }
 
     private let historyLength = 24
@@ -26,9 +32,11 @@ final class Model: ObservableObject {
     private var ticker: Task<Void, Never>?
     private var busy = false
 
-    var menuBarTitle: String {
-        guard let busy = data?.header.busyPercent else { return "—" }
-        return "\(Int(busy.rounded()))%"
+    /// Icon of the app whose agent is busiest, once that agent uses half a core or more.
+    var busiestAppIcon: NSImage? {
+        guard let top = data?.agents.max(by: { ($0.cpu ?? 0) < ($1.cpu ?? 0) }),
+              (top.cpu ?? 0) >= 50, let bundle = top.appBundle else { return nil }
+        return IconCache.icon(for: bundle)
     }
 
     var severity: Color {
@@ -70,6 +78,9 @@ final class Model: ObservableObject {
             next[row.id] = Array(series.suffix(historyLength))
         }
         history = next
+        if let busy = data.header.busyPercent {
+            machineHistory = Array((machineHistory + [busy]).suffix(historyLength))
+        }
     }
 
     /// Lifted from claude-top's app: sampling reads process environments and shells out to
