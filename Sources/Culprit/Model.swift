@@ -50,12 +50,7 @@ final class Model: ObservableObject {
         return bundle.flatMap(IconCache.icon(for:)) ?? NSWorkspace.shared.icon(for: .applicationBundle)
     }
 
-    var severity: Color {
-        guard let header = data?.header, let busy = header.busyPercent else { return .secondary }
-        if busy > 85 || header.queuedThreads > Double(header.cpuCount) * 2 { return .red }
-        if busy > 55 { return .orange }
-        return .green
-    }
+    var severity: Color { data?.header.severity ?? .secondary }
 
     func start() {
         guard ticker == nil else { return }

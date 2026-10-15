@@ -3,6 +3,13 @@
 Versions follow [Semantic Versioning](https://semver.org). Each release's notes on GitHub are
 its section below.
 
+## [Unreleased]
+
+### Fixed
+
+- The core bar in the panel now uses the same color as the menu bar icon. Before, a long run
+  queue turned the icon red while the bar stayed orange or green.
+
 ## [0.1.0] - 2026-10-14
 
 First release.
