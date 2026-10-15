@@ -126,7 +126,7 @@ struct HeaderView: View {
                     .foregroundStyle(.tertiary)
                     .help(explanation)
             }
-            CoreBar(busyCores: header.busyCores ?? 0, cpuCount: header.cpuCount)
+            CoreBar(busyCores: header.busyCores ?? 0, cpuCount: header.cpuCount, color: header.severity)
             HStack {
                 Text("Memory \(Fmt.gb(header.memUsed)) of \(Fmt.gb(header.memTotal))")
                 Spacer()
@@ -157,9 +157,21 @@ struct HeaderView: View {
     }
 }
 
+extension PanelData.Header {
+    /// Machine load color, shared by the menu bar icon and the core bar so they always agree.
+    /// A run queue over twice the core count is overload even while busy time looks moderate.
+    var severity: Color {
+        guard let busy = busyPercent else { return .secondary }
+        if busy > 85 || queuedThreads > Double(cpuCount) * 2 { return .red }
+        if busy > 55 { return .orange }
+        return .green
+    }
+}
+
 struct CoreBar: View {
     let busyCores: Double
     let cpuCount: Int
+    let color: Color
 
     var body: some View {
         HStack(spacing: 3) {
@@ -168,7 +180,7 @@ struct CoreBar: View {
                 GeometryReader { geo in
                     ZStack(alignment: .leading) {
                         Capsule().fill(Color.primary.opacity(0.1))
-                        Capsule().fill(Fmt.heat(busyCores / Double(max(cpuCount, 1)) * 100))
+                        Capsule().fill(color)
                             .frame(width: geo.size.width * fill)
                     }
                 }
@@ -562,12 +574,5 @@ enum Fmt {
         if value >= 150 { return .red }
         if value >= 50 { return .orange }
         return .primary
-    }
-
-    /// Whole-machine percentage, 0 to 100.
-    static func heat(_ percent: Double) -> Color {
-        if percent > 85 { return .red }
-        if percent > 55 { return .orange }
-        return .green
     }
 }
