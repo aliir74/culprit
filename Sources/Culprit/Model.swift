@@ -29,13 +29,14 @@ final class Model: ObservableObject {
     /// Every `claude` install worth asking for the roster. Opened from Finder or as a login
     /// item, the app gets launchd's `PATH`, which misses `~/.local/bin` where the native
     /// installer puts it. Without it the roster is empty and every session shows as leftovers.
-    nonisolated static let claudeBinaries: [String] = {
+    /// Looked up every tick, as the engine does, so an install made after launch is found.
+    nonisolated static var claudeBinaries: [String] {
         let home = NSHomeDirectory() as NSString
         return Shell.locateAll("claude", extraDirectories: [
             home.appendingPathComponent(".local/bin"),
             home.appendingPathComponent(".claude/local"),
         ])
-    }()
+    }
 
     private let historyLength = 24
     private let collector = IncrementalCollector()
