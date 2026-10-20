@@ -26,6 +26,18 @@ final class Model: ObservableObject {
         didSet { UserDefaults.standard.set(indicator.rawValue, forKey: "indicator") }
     }
 
+    /// Every `claude` install worth asking for the roster. Opened from Finder or as a login
+    /// item, the app gets launchd's `PATH`, which misses `~/.local/bin` where the native
+    /// installer puts it. Without it the roster is empty and every session shows as leftovers.
+    /// Looked up every tick, as the engine does, so an install made after launch is found.
+    nonisolated static var claudeBinaries: [String] {
+        let home = NSHomeDirectory() as NSString
+        return Shell.locateAll("claude", extraDirectories: [
+            home.appendingPathComponent(".local/bin"),
+            home.appendingPathComponent(".claude/local"),
+        ])
+    }
+
     private let historyLength = 24
     private let collector = IncrementalCollector()
     private let bundles = BundleCache()
@@ -102,7 +114,7 @@ final class Model: ObservableObject {
         let result = await Task.detached(priority: .utility) {
             () -> (Snapshot, RawSample, [Int32: Double])? in
             let listing = ContainerCollector.current(timeout: 5)
-            let roster = SessionRoster.live()
+            let roster = SessionRoster.live(candidates: Self.claudeBinaries)
             let sample = collector.collect(containers: listing.containers,
                                            dockerAnswered: listing.answered,
                                            roster: roster)

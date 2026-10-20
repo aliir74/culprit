@@ -3,10 +3,13 @@
 Versions follow [Semantic Versioning](https://semver.org). Each release's notes on GitHub are
 its section below.
 
-## [Unreleased]
+## [0.1.1] - 2026-10-20
 
 ### Fixed
 
+- Agent sessions show again when Culprit is opened from Finder or as a login item. That
+  launch gets a `PATH` without `~/.local/bin`, so the native `claude` install was never
+  found, the session list came back empty, and every session was filed under leftovers.
 - The core bar in the panel now uses the same color as the menu bar icon. Before, a long run
   queue turned the icon red while the bar stayed orange or green.
 
