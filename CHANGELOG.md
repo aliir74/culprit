@@ -3,7 +3,7 @@
 Versions follow [Semantic Versioning](https://semver.org). Each release's notes on GitHub are
 its section below.
 
-## [Unreleased]
+## [0.1.1] - 2026-10-20
 
 ### Fixed
 
